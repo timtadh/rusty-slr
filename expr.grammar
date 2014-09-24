@@ -1,0 +1,37 @@
+Expr -> Expr PLUS Term
+      | Expr DASH Term
+      | Term
+      ;
+
+Term -> Term STAR Unary
+      | Term SLASH Unary
+      | Unary
+      ;
+
+Unary -> PostUnary
+       | DASH PostUnary
+       ;
+
+PostUnary -> PostUnary Apply
+           | PostUnary Index
+           | Factor
+           ;
+
+Factor -> Atom
+        | LPAREN Expr RPAREN
+        ;
+
+Atom -> NUMBER
+      | NAME
+      ;
+
+Apply -> LPAREN Args RPAREN
+       | LPAREN RPAREN
+       ;
+
+Args -> Args COMMA Expr
+      | Expr
+      ;
+
+Index -> LSQUARE Expr RSQUARE ;
+

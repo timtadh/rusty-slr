@@ -1,0 +1,5 @@
+[package]
+
+name = "slr"
+version = "0.0.1"
+authors = ["Tim Henderson <tim.tadh@gmail.com>"]
