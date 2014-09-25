@@ -10,31 +10,52 @@ use std::collections::{HashMap,HashSet,TreeMap};
 use std::slice;
 use std::vec;
 use std::cmp;
+use std::fmt::{Formatter,Show,FormatError};
 
 use gram_parser::Node;
 
-#[deriving(Hash, Clone, Eq, PartialEq, PartialOrd, Show)]
+#[deriving(Hash, Clone, PartialEq, Ord, PartialOrd, Eq, Show)]
 pub enum Symbol {
     Term(String),
     NonTerm(String)
 }
 
-#[deriving(Hash, Eq, PartialEq, PartialOrd, Show)]
+
+
+#[deriving(Hash, PartialEq, Ord, PartialOrd, Eq, Show)]
 pub struct Production {
     nt : String,
     symbols : Vec<Symbol>
 }
 
-
-#[deriving(Hash, Clone, Eq, Show)]
+#[deriving(Hash, Clone, Eq)]
 pub struct Item<'a> {
     production : &'a Production,
     dot : uint
 }
 
+impl<'a> Show for Item<'a> {
+    fn fmt(&self, fmtr : &mut Formatter) -> Result<(), FormatError> {
+        fmtr.write_str(format!("{} -> ", self.production.nt).as_slice()).ok();
+        for (i, sym) in self.production.symbols.iter().enumerate() {
+            if i == self.dot {
+                fmtr.write_str(". ").ok();
+            }
+            fmtr.write_str(format!("{}", sym).as_slice()).ok();
+            if i + 1 < self.production.symbols.len() {
+                fmtr.write_str(" ").ok();
+            }
+        }
+        if self.dot == self.production.symbols.len() {
+                fmtr.write_str(" . ").ok();
+        }
+        return Ok(());
+    }
+}
+
 impl<'a> PartialEq for Item<'a> {
     fn eq<'a>(&self, other : &Item<'a>) -> bool {
-        self.dot == other.dot && self.production.eq(other.production)
+        self.dot == other.dot && *(self.production) == (*other.production)
     }
     fn ne<'a>(&self, other : &Item<'a>) -> bool {
         !self.eq(other)
@@ -90,8 +111,10 @@ impl<'a> ItemSet<'a> {
     }
 
     pub fn add<'b>(&'b mut self, item : Item<'a>) {
-        let (idx, _) = self.find(&item);
-        self.insert(idx, item);
+        let (idx, has) = self.find(&item);
+        if !has {
+            self.insert(idx, item);
+        }
     }
 
     fn insert<'b>(&'b mut self, i : uint, item : Item<'a>) {
@@ -185,19 +208,6 @@ pub struct Grammar {
     productions : HashMap<String, Vec<Production>>
 }
 
-#[deriving(Show)]
-pub struct SLRState<'a> {
-    id : uint,
-    items : ItemSet<'a>,
-    moves : HashMap<Symbol, uint>
-}
-
-#[deriving(Show)]
-pub struct SLRAutomaton<'a> {
-    grammar : &'a Grammar,
-    states : Vec<SLRState<'a>>
-}
-
 impl Grammar {
     pub fn new(root : Node) -> Grammar {
         let mut symbols : HashSet<Symbol> = HashSet::new();
@@ -205,7 +215,6 @@ impl Grammar {
         symbols.insert(NonTerm(start.clone()));
         let mut productions : HashMap<String, Vec<Production>> = HashMap::new();
         for pnode in root.kids.iter() {
-            println!("{}", pnode.kids[0])
             let nt : String = Grammar::name(Grammar::symbol(&*pnode.kids[0]));
             let mut bodies : Vec<Production> = productions.pop(&nt).unwrap_or(Vec::new());
             for rules in pnode.kids[1].kids.iter() {
@@ -241,6 +250,7 @@ impl Grammar {
         }
     }
 
+    #[allow(non_snake_case)]
     pub fn LR0_automaton<'a>(&'a self) -> SLRAutomaton<'a> {
         let mut A = SLRAutomaton{grammar: self, states: Vec::new()};
         let mut states : TreeMap<ItemSet<'a>,uint> = TreeMap::new();
@@ -250,19 +260,19 @@ impl Grammar {
 
         while stack.len() > 0 {
             let items = stack.pop().unwrap();
-            states.insert(items.clone(), next_id);
 
-            for sym in self.symbols.iter() {
-                let next = self.goto(&items, sym);
-                if next.len() == 0 {
-                    continue;
-                }
+            for (_, next) in self.moves(&items).into_iter() {
                 if states.contains_key(&next) {
                     continue;
                 }
                 stack.push(next);
             }
 
+            if states.contains_key(&items) {
+                continue;
+            }
+
+            states.insert(items.clone(), next_id);
             let state = SLRState{
                 id : next_id,
                 items : items,
@@ -273,14 +283,9 @@ impl Grammar {
         }
 
         for state in A.states.iter_mut() {
-            for sym in self.symbols.iter() {
-                let next = self.goto(&state.items, sym);
-                if next.len() == 0 {
-                    continue;
-                }
+            for (sym, next) in self.moves(&state.items).into_iter() {
                 if states.contains_key(&next) {
-                    let i = states[next];
-                    state.moves.insert(sym.clone(), i);
+                    state.moves.insert(sym.clone(), states[next]);
                 }
             }
         }
@@ -303,6 +308,7 @@ impl Grammar {
         }
         while stack.len() > 0 {
             let item : Item = stack.pop().unwrap();
+            ret.add(item.clone());
             if item.dot < item.production.symbols.len() {
                 let ref sym : Symbol = item.production.symbols[item.dot];
                 let prods = match *sym {
@@ -318,28 +324,56 @@ impl Grammar {
                     }
                 }
             }
-            ret.add(item);
         }
         return ret
     }
 
     #[allow(non_snake_case)]
-    pub fn goto<'a>(&'a self, I : &ItemSet<'a>, X : &Symbol) -> ItemSet<'a> {
-        let mut ret = ItemSet::new();
+    pub fn moves<'a>(&'a self, I : &ItemSet<'a>) -> HashMap<Symbol, ItemSet<'a>> {
+        let mut ret : HashMap<Symbol,ItemSet<'a>> = HashMap::new();
         for item in I.iter() {
             if item.dot >= item.production.symbols.len() {
                 continue
             }
             let ref sym = item.production.symbols[item.dot];
-            if sym != X {
-                continue
-            }
             let next = ItemSet::singleton(Item{production: item.production, dot: item.dot+1});
+            let mut items = ret.pop(sym).unwrap_or(ItemSet::new());
             for i in self.closure(&next).into_iter() {
-                ret.add(i);
+                items.add(i)
             }
+            ret.insert(sym.clone(), items);
         }
         return ret
+
     }
 }
 
+#[deriving(Show)]
+pub struct SLRState<'a> {
+    id : uint,
+    items : ItemSet<'a>,
+    moves : HashMap<Symbol, uint>
+}
+
+pub struct SLRAutomaton<'a> {
+    grammar : &'a Grammar,
+    states : Vec<SLRState<'a>>
+}
+
+impl<'a> Show for SLRAutomaton<'a> {
+    fn fmt(&self, fmtr : &mut Formatter) -> Result<(), FormatError> {
+        fmtr.write_str("LR(0) Automaton\n").ok();
+        fmtr.write_str(format!("  symbols : {}\n", self.grammar.symbols).as_slice()).ok();
+        for (i,state) in self.states.iter().enumerate() {
+            fmtr.write_str(format!("    state : {}\n", i).as_slice()).ok();
+            for item in state.items.iter() {
+                fmtr.write_str(format!("      {}\n", item).as_slice()).ok();
+            }
+            fmtr.write_str("      moves : \n").ok();
+            for (k,v) in state.moves.iter() {
+                fmtr.write_str(format!("        {} -> {}\n", k, v).as_slice()).ok();
+            }
+        }
+        return Ok(());
+    }
+}

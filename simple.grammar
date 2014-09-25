@@ -1,0 +1,12 @@
+Expr -> Expr PLUS Term
+      | Term
+      ;
+
+Term -> Term STAR Factor
+      | Factor
+      ;
+
+Factor -> NUMBER
+        | LPAREN Expr RPAREN
+        ;
+
