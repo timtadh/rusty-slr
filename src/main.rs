@@ -81,5 +81,9 @@ fn main() {
 
     log!("the grammar from {} is {} characters long", grammar_path, grammar.len());
     let grammar = cfg.unwrap_or_die(parse(&mut gram_lexer(grammar.as_slice())));
-    println!("{}", slr::Grammar::new(grammar).LR0_automaton());
+    let grammar = slr::Grammar::new(grammar);
+    let automaton = grammar.LR0_automaton();
+    println!("{}", automaton);
+    println!("\n");
+    println!("{}", automaton.table());
 }
